@@ -28,27 +28,156 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-.main { background:#F7F8FB; }
-.block-container { max-width:1500px; padding-top:1.4rem; }
-.header {
-    background:white; border:1px solid #DDE2EA;
-    border-bottom:3px solid #2B4C7E; border-radius:7px;
-    padding:20px 25px; margin-bottom:18px;
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+
+:root {
+    --sky:    #0EA5E9;
+    --crimson:#E11D48;
+    --orange: #F97316;
+    --lime:   #22C55E;
+    --violet: #7C3AED;
+    --ink:    #12172B;
+    --mist:   #64748B;
 }
-.header h1 { margin:0 0 5px; color:#000 !important; font-size:1.9rem; }
-.header p { margin:3px 0; color:#46536B; }
-.section { font-size:.82rem; font-weight:700; text-transform:uppercase;
-           letter-spacing:.45px; color:#30384A; border-bottom:1px solid #DDE2EA;
-           padding-bottom:7px; margin:18px 0 12px; }
-.small-note { color:#5B6577; font-size:.84rem; }
+
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.main { background:#F8F9FF; }
+.block-container { max-width:1500px; padding-top:1.2rem; }
+h1, h2, h3 { font-family: 'Space Grotesk', sans-serif !important; }
+
+/* ---------- Hero ---------- */
+@keyframes gradientShift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+.header {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(115deg, var(--violet), var(--crimson) 35%, var(--orange) 65%, var(--sky));
+    background-size: 300% 300%;
+    animation: gradientShift 14s ease infinite;
+    border-radius: 16px;
+    padding: 30px 34px;
+    margin-bottom: 22px;
+    box-shadow: 0 12px 32px -8px rgba(124, 58, 237, 0.45);
+}
+.header h1 {
+    margin: 0 0 8px; color:#FFFFFF !important; font-size: 2.15rem;
+    font-weight: 700; letter-spacing: -0.5px;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.18);
+}
+.header p { margin:3px 0; color: rgba(255,255,255,0.92); font-size: 0.98rem; font-weight: 500; }
+.header .tag {
+    display:inline-block; margin-top:12px; margin-right:8px;
+    background: rgba(255,255,255,0.18); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.35); color:#fff;
+    padding: 4px 12px; border-radius: 999px; font-size: 0.76rem; font-weight:600;
+}
+
+/* ---------- Section labels ---------- */
+.section {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.95rem; font-weight: 700; color: var(--ink);
+    margin: 22px 0 14px; padding-left: 12px;
+    border-left: 4px solid var(--violet);
+}
+.small-note { color: var(--mist); font-size:.84rem; }
+
+/* ---------- Step chips (getting started) ---------- */
+.steps-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom: 6px; }
+.step-chip {
+    flex:1; min-width:190px; background:#fff; border-radius:14px;
+    padding:16px 18px; border:1px solid #E7E9F5;
+    border-top:4px solid var(--accent, var(--violet));
+    box-shadow: 0 2px 10px rgba(18,23,43,0.04);
+    transition: transform .18s ease, box-shadow .18s ease;
+}
+.step-chip:hover { transform: translateY(-4px); box-shadow: 0 10px 24px rgba(18,23,43,0.12); }
+.step-chip .num {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:26px; height:26px; border-radius:50%; color:#fff; font-weight:700;
+    font-size:0.78rem; background: var(--accent, var(--violet)); margin-bottom:8px;
+}
+.step-chip h4 { margin:2px 0 4px; font-family:'Space Grotesk',sans-serif; font-size:0.95rem; color:var(--ink); }
+.step-chip p { margin:0; font-size:0.8rem; color: var(--mist); line-height:1.35; }
+
+/* ---------- Sidebar ---------- */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #14172E 0%, #1B1F3B 100%);
+}
+[data-testid="stSidebar"] * { color: #E7E9F5 !important; }
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+    font-family:'Space Grotesk', sans-serif !important; color:#fff !important;
+}
+[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.14); }
+[data-testid="stFileUploaderDropzone"] {
+    background: rgba(124,58,237,0.12) !important;
+    border: 1.5px dashed #A78BFA !important; border-radius: 12px !important;
+    transition: background .15s ease, border-color .15s ease;
+}
+[data-testid="stFileUploaderDropzone"]:hover {
+    background: rgba(124,58,237,0.24) !important; border-color: #F97316 !important;
+}
+
+/* ---------- Buttons ---------- */
+.stButton>button, .stDownloadButton>button {
+    background: linear-gradient(100deg, var(--violet), var(--crimson));
+    color: #fff !important; border: none !important; border-radius: 10px !important;
+    font-weight: 700 !important; letter-spacing: .2px;
+    box-shadow: 0 4px 14px rgba(124,58,237,0.35);
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
+.stButton>button:hover, .stDownloadButton>button:hover {
+    transform: translateY(-2px) scale(1.01);
+    box-shadow: 0 8px 22px rgba(225,29,72,0.4);
+    filter: brightness(1.06);
+}
+.stButton>button:active, .stDownloadButton>button:active { transform: translateY(0) scale(0.99); }
+
+/* ---------- Metrics ---------- */
+[data-testid="stMetric"] {
+    background:#fff; border-radius:14px; padding:14px 16px 10px;
+    border:1px solid #E7E9F5; border-bottom:4px solid var(--sky);
+    box-shadow: 0 2px 10px rgba(18,23,43,0.05);
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+[data-testid="stMetric"]:hover { transform: translateY(-3px); box-shadow: 0 10px 22px rgba(18,23,43,0.1); }
+[data-testid="stMetricLabel"] { color: var(--mist) !important; font-weight:600 !important; }
+[data-testid="stMetricValue"] { color: var(--ink) !important; font-family:'Space Grotesk',sans-serif !important; }
+
+/* ---------- Tabs ---------- */
+[data-baseweb="tab-list"] { gap: 6px; border-bottom: 1px solid #E7E9F5; }
+[data-baseweb="tab"] {
+    border-radius: 10px 10px 0 0 !important; font-weight:600 !important;
+    padding: 8px 16px !important; transition: background .15s ease, color .15s ease;
+}
+[data-baseweb="tab"]:hover { background: rgba(124,58,237,0.08); }
+[aria-selected="true"][data-baseweb="tab"] {
+    background: linear-gradient(100deg, var(--violet), var(--crimson)) !important;
+    color: #fff !important;
+}
+
+/* ---------- Expander / dataframe / alerts ---------- */
+[data-testid="stExpander"] {
+    border-radius: 12px !important; border:1px solid #E7E9F5 !important; overflow:hidden;
+}
+[data-testid="stDataFrame"] { border-radius: 12px; overflow:hidden; border:1px solid #E7E9F5; }
+div[data-baseweb="notification"] { border-radius: 12px !important; }
+
+/* ---------- Slider accent ---------- */
+[data-testid="stSlider"] [role="slider"] { background: var(--orange) !important; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="header">
-<h1>QTL-seq / Bulk Segregant Analysis Pipeline</h1>
+<h1>🧬 QTL-seq / Bulk Segregant Analysis Pipeline</h1>
 <p>QTL-seq · Δ(SNP-index) · sliding-window analysis · confidence intervals</p>
 <p>Automated QTL-seq with manual BSA fallback · interactive chromosome plots · downloadable results</p>
+<span class="tag">⚡ Automated pipeline</span>
+<span class="tag">📊 Live chromosome plots</span>
+<span class="tag">📦 One-click downloads</span>
 </div>
 """, unsafe_allow_html=True)
 
