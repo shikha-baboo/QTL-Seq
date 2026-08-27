@@ -892,4 +892,4 @@ def make_summary(snp_df, window_df, ref_len, n1, n2,
         f"  Sample sizes: N1={n1}, N2={n2}",
         f"  Window size: {window_size} bp",
         f"  Step size: {step_size} bp",
-        f"  Minimum depth filter: {min_depth}",
+        f"  Minimum depth filter: {min_depth}",]
