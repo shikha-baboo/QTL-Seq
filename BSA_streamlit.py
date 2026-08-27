@@ -102,24 +102,6 @@ h1, h2, h3 { font-family: 'Space Grotesk', sans-serif !important; }
 .step-chip h4 { margin:2px 0 4px; font-family:'Space Grotesk',sans-serif; font-size:0.95rem; color:var(--ink); }
 .step-chip p { margin:0; font-size:0.8rem; color: var(--mist); line-height:1.35; }
 
-/* ---------- Sidebar ---------- */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #14172E 0%, #1B1F3B 100%);
-}
-[data-testid="stSidebar"] * { color: #E7E9F5 !important; }
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-    font-family:'Space Grotesk', sans-serif !important; color:#fff !important;
-}
-[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.14); }
-[data-testid="stFileUploaderDropzone"] {
-    background: rgba(124,58,237,0.12) !important;
-    border: 1.5px dashed #A78BFA !important; border-radius: 12px !important;
-    transition: background .15s ease, border-color .15s ease;
-}
-[data-testid="stFileUploaderDropzone"]:hover {
-    background: rgba(124,58,237,0.24) !important; border-color: #F97316 !important;
-}
-
 /* ---------- Buttons ---------- */
 .stButton>button, .stDownloadButton>button {
     background: linear-gradient(100deg, var(--violet), var(--crimson));
@@ -134,6 +116,16 @@ h1, h2, h3 { font-family: 'Space Grotesk', sans-serif !important; }
     filter: brightness(1.06);
 }
 .stButton>button:active, .stDownloadButton>button:active { transform: translateY(0) scale(0.99); }
+
+/* ---------- File uploader (now on main page) ---------- */
+[data-testid="stFileUploaderDropzone"] {
+    background: rgba(124,58,237,0.06) !important;
+    border: 1.5px dashed #A78BFA !important; border-radius: 12px !important;
+    transition: background .15s ease, border-color .15s ease;
+}
+[data-testid="stFileUploaderDropzone"]:hover {
+    background: rgba(124,58,237,0.14) !important; border-color: #F97316 !important;
+}
 
 /* ---------- Metrics ---------- */
 [data-testid="stMetric"] {
@@ -925,78 +917,88 @@ def create_outputs(snp_df, window_df, fig, outdir, ref_len,
 
 
 # =============================================================================
-# SIDEBAR INPUTS
+# MAIN-PAGE INPUTS (moved from sidebar, full width)
 # =============================================================================
-st.sidebar.header("Input Files")
+st.markdown('<div class="section">Input Files</div>', unsafe_allow_html=True)
 
-ref_upload = st.sidebar.file_uploader(
-    "Reference FASTA",
-    type=["fasta", "fa", "fna"],
-    help="Reference genome used for mpileup/QTL-seq."
-)
-parent_upload = st.sidebar.file_uploader(
-    "Parent sorted BAM",
-    type=["bam"],
-)
-bulk1_upload = st.sidebar.file_uploader(
-    "Bulk 1 sorted BAM",
-    type=["bam"],
-)
-bulk2_upload = st.sidebar.file_uploader(
-    "Bulk 2 sorted BAM",
-    type=["bam"],
-)
+up_col1, up_col2, up_col3, up_col4 = st.columns(4)
+with up_col1:
+    ref_upload = st.file_uploader(
+        "Reference FASTA",
+        type=["fasta", "fa", "fna"],
+        help="Reference genome used for mpileup/QTL-seq."
+    )
+with up_col2:
+    parent_upload = st.file_uploader(
+        "Parent sorted BAM",
+        type=["bam"],
+    )
+with up_col3:
+    bulk1_upload = st.file_uploader(
+        "Bulk 1 sorted BAM",
+        type=["bam"],
+    )
+with up_col4:
+    bulk2_upload = st.file_uploader(
+        "Bulk 2 sorted BAM",
+        type=["bam"],
+    )
 
-st.sidebar.markdown("---")
-st.sidebar.header("Analysis Parameters")
+st.markdown('<div class="section">Analysis Parameters</div>', unsafe_allow_html=True)
 
-n1 = st.sidebar.number_input(
-    "Bulk 1 sample size (N1)", min_value=1, value=20, step=1
-)
-n2 = st.sidebar.number_input(
-    "Bulk 2 sample size (N2)", min_value=1, value=20, step=1
-)
+p_col1, p_col2, p_col3, p_col4 = st.columns(4)
+with p_col1:
+    n1 = st.number_input(
+        "Bulk 1 sample size (N1)", min_value=1, value=20, step=1
+    )
+with p_col2:
+    n2 = st.number_input(
+        "Bulk 2 sample size (N2)", min_value=1, value=20, step=1
+    )
+with p_col3:
+    min_total_depth = st.number_input(
+        "Minimum total bulk depth",
+        min_value=1, value=50, step=5,
+        help="Original notebook default: 50."
+    )
+with p_col4:
+    ref_allele_freq = st.slider(
+        "Minimum parent reference allele frequency",
+        min_value=0.0, max_value=1.0, value=0.10, step=0.01
+    )
 
-min_total_depth = st.sidebar.number_input(
-    "Minimum total bulk depth",
-    min_value=1, value=50, step=5,
-    help="Original notebook default: 50."
-)
-ref_allele_freq = st.sidebar.slider(
-    "Minimum parent reference allele frequency",
-    min_value=0.0, max_value=1.0, value=0.10, step=0.01
-)
+st.markdown('<div class="section">Sliding Window &amp; Strategy</div>', unsafe_allow_html=True)
 
-st.sidebar.markdown("---")
-st.sidebar.header("Sliding Window")
+w_col1, w_col2, w_col3, w_col4 = st.columns(4)
+with w_col1:
+    window_kb = st.number_input(
+        "Window size (kb)",
+        min_value=1, value=500, step=10
+    )
+with w_col2:
+    step_kb = st.number_input(
+        "Step size (kb)",
+        min_value=1, value=50, step=5
+    )
+with w_col3:
+    use_reference_adaptive = st.checkbox(
+        "Use reference-length adaptive window",
+        value=False,
+        help="The original notebook adapted the window to reference length. "
+             "When enabled, window=max(20, reference_length/50) and "
+             "step=max(2, window/10)."
+    )
+with w_col4:
+    strategy = st.radio(
+        "Analysis strategy",
+        [
+            "QTL-seq first → manual BSA fallback",
+            "Manual BSA only",
+            "QTL-seq only",
+        ],
+    )
 
-window_kb = st.sidebar.number_input(
-    "Window size (kb)",
-    min_value=1, value=500, step=10
-)
-step_kb = st.sidebar.number_input(
-    "Step size (kb)",
-    min_value=1, value=50, step=5
-)
-
-use_reference_adaptive = st.sidebar.checkbox(
-    "Use reference-length adaptive window",
-    value=False,
-    help="The original notebook adapted the window to reference length. "
-         "When enabled, window=max(20, reference_length/50) and "
-         "step=max(2, window/10)."
-)
-
-strategy = st.sidebar.radio(
-    "Analysis strategy",
-    [
-        "QTL-seq first → manual BSA fallback",
-        "Manual BSA only",
-        "QTL-seq only",
-    ],
-)
-
-run_button = st.sidebar.button(
+run_button = st.button(
     "Run QTL-seq / BSA Analysis",
     type="primary",
     use_container_width=True,
@@ -1006,34 +1008,6 @@ run_button = st.sidebar.button(
 # =============================================================================
 # MAIN APP
 # =============================================================================
-st.markdown(
-    '<div class="section">Pipeline status</div>',
-    unsafe_allow_html=True
-)
-
-tool_cols = st.columns(3)
-for col, name in zip(tool_cols, ["samtools", "qtlseq", "conda"]):
-    with col:
-        if name == "conda":
-            found = shutil.which("conda") or (
-                "/usr/local/bin/conda"
-                if os.path.exists("/usr/local/bin/conda") else None
-            )
-        else:
-            found = find_executable(name)
-        if found:
-            st.success(f"{name}: available")
-        else:
-            st.warning(f"{name}: not found")
-
-st.markdown(
-    '<p class="small-note">'
-    "This Streamlit version replaces the notebook's Colab upload, shell-magic, "
-    "Conda setup, and download cells. The QTL-seq/BSA analysis logic is retained."
-    "</p>",
-    unsafe_allow_html=True,
-)
-
 if run_button:
     if not all([ref_upload, parent_upload, bulk1_upload, bulk2_upload]):
         st.error(
