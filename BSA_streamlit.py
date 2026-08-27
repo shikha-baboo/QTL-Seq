@@ -301,6 +301,104 @@ def reference_length(ref):
 
 
 # =============================================================================
+# FASTQ -> SORTED BAM ALIGNMENT
+# =============================================================================
+def build_bwa_index(ref, progress=None):
+    """Build a bwa index for the reference FASTA if one doesn't already exist."""
+    bwa = command_for("bwa")
+    if not bwa:
+        raise RuntimeError(
+            "bwa is required to align FASTQ reads but was not found. "
+            "Install bwa in the deployment environment."
+        )
+
+    idx_exts = [".amb", ".ann", ".bwt", ".pac", ".sa"]
+    if all(os.path.exists(ref + ext) for ext in idx_exts):
+        if progress:
+            progress("bwa index for reference already present; skipping.")
+        return
+
+    if progress:
+        progress("Building bwa index for reference FASTA...")
+
+    r = run_cmd(bwa + ["index", ref], timeout=3600)
+    if r.returncode != 0:
+        raise RuntimeError(f"bwa index failed: {r.stderr.strip()}")
+
+    if progress:
+        progress("✓ bwa index built.")
+
+
+def align_fastq_to_bam(ref, fastq1, fastq2, sample_name, work_dir,
+                       threads=2, progress=None):
+    """Align one sample's FASTQ (single- or paired-end) to the reference,
+    producing a coordinate-sorted, indexed BAM file via bwa mem | samtools sort."""
+    bwa = command_for("bwa")
+    samtools = command_for("samtools")
+
+    if not bwa:
+        raise RuntimeError(
+            "bwa is required to align FASTQ reads but was not found."
+        )
+    if not samtools:
+        raise RuntimeError("samtools is required but was not found.")
+
+    sorted_bam = os.path.join(work_dir, f"{sample_name}.sorted.bam")
+
+    align_cmd = bwa + ["mem", "-t", str(threads), ref, fastq1]
+    if fastq2:
+        align_cmd.append(fastq2)
+
+    sort_cmd = samtools + [
+        "sort", "-@", str(threads), "-o", sorted_bam, "-"
+    ]
+
+    if progress:
+        mode = "paired-end" if fastq2 else "single-end"
+        progress(f"Aligning {sample_name} ({mode}) reads with bwa mem...")
+
+    align_proc = subprocess.Popen(
+        align_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    sort_proc = subprocess.Popen(
+        sort_cmd, stdin=align_proc.stdout,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    align_proc.stdout.close()
+
+    try:
+        sort_out, sort_err = sort_proc.communicate(timeout=7200)
+    except subprocess.TimeoutExpired:
+        align_proc.kill()
+        sort_proc.kill()
+        raise RuntimeError(f"Alignment of {sample_name} timed out.")
+
+    _, align_err = align_proc.communicate()
+
+    if align_proc.returncode != 0:
+        raise RuntimeError(
+            f"bwa mem failed for {sample_name}: "
+            f"{align_err.decode(errors='ignore')[-1500:]}"
+        )
+    if sort_proc.returncode != 0:
+        raise RuntimeError(
+            f"samtools sort failed for {sample_name}: "
+            f"{sort_err.decode(errors='ignore')[-1500:]}"
+        )
+
+    if progress:
+        progress(f"✓ {sample_name}: aligned and sorted -> {os.path.basename(sorted_bam)}")
+
+    ok, message = ensure_bam_index(sorted_bam)
+    if not ok:
+        raise RuntimeError(f"{sample_name}: {message}")
+    if progress:
+        progress(f"✓ {sample_name}: {message}")
+
+    return sorted_bam
+
+
+# =============================================================================
 # QTL-seq / MANUAL BSA CORE
 # =============================================================================
 def sliding_window_analysis(df, window_size, step_size):
@@ -921,27 +1019,45 @@ def create_outputs(snp_df, window_df, fig, outdir, ref_len,
 # =============================================================================
 st.markdown('<div class="section">Input Files</div>', unsafe_allow_html=True)
 
-up_col1, up_col2, up_col3, up_col4 = st.columns(4)
-with up_col1:
-    ref_upload = st.file_uploader(
-        "Reference FASTA",
-        type=["fasta", "fa", "fna"],
-        help="Reference genome used for mpileup/QTL-seq."
+FASTQ_TYPES = ["gz", "fastq", "fq"]
+FASTQ_HELP = "Gzipped FASTQ (.fastq.gz / .fq.gz) or plain FASTQ."
+
+ref_upload = st.file_uploader(
+    "Reference FASTA",
+    type=["fasta", "fa", "fna"],
+    help="Reference genome used for alignment and mpileup/QTL-seq."
+)
+
+fq_col1, fq_col2, fq_col3 = st.columns(3)
+
+with fq_col1:
+    st.markdown("**Parent reads**")
+    parent_r1_upload = st.file_uploader(
+        "Parent FASTQ R1", type=FASTQ_TYPES, help=FASTQ_HELP, key="parent_r1"
     )
-with up_col2:
-    parent_upload = st.file_uploader(
-        "Parent sorted BAM",
-        type=["bam"],
+    parent_r2_upload = st.file_uploader(
+        "Parent FASTQ R2 (optional, paired-end)",
+        type=FASTQ_TYPES, help=FASTQ_HELP, key="parent_r2"
     )
-with up_col3:
-    bulk1_upload = st.file_uploader(
-        "Bulk 1 sorted BAM",
-        type=["bam"],
+
+with fq_col2:
+    st.markdown("**Bulk 1 reads**")
+    bulk1_r1_upload = st.file_uploader(
+        "Bulk 1 FASTQ R1", type=FASTQ_TYPES, help=FASTQ_HELP, key="bulk1_r1"
     )
-with up_col4:
-    bulk2_upload = st.file_uploader(
-        "Bulk 2 sorted BAM",
-        type=["bam"],
+    bulk1_r2_upload = st.file_uploader(
+        "Bulk 1 FASTQ R2 (optional, paired-end)",
+        type=FASTQ_TYPES, help=FASTQ_HELP, key="bulk1_r2"
+    )
+
+with fq_col3:
+    st.markdown("**Bulk 2 reads**")
+    bulk2_r1_upload = st.file_uploader(
+        "Bulk 2 FASTQ R1", type=FASTQ_TYPES, help=FASTQ_HELP, key="bulk2_r1"
+    )
+    bulk2_r2_upload = st.file_uploader(
+        "Bulk 2 FASTQ R2 (optional, paired-end)",
+        type=FASTQ_TYPES, help=FASTQ_HELP, key="bulk2_r2"
     )
 
 st.markdown('<div class="section">Analysis Parameters</div>', unsafe_allow_html=True)
@@ -1009,10 +1125,10 @@ run_button = st.button(
 # MAIN APP
 # =============================================================================
 if run_button:
-    if not all([ref_upload, parent_upload, bulk1_upload, bulk2_upload]):
+    if not all([ref_upload, parent_r1_upload, bulk1_r1_upload, bulk2_r1_upload]):
         st.error(
-            "Please upload all four required files: reference FASTA, "
-            "parent sorted BAM, bulk 1 sorted BAM, and bulk 2 sorted BAM."
+            "Please upload the reference FASTA and at least the R1 FASTQ "
+            "file for the parent, bulk 1, and bulk 2 samples."
         )
         st.stop()
 
@@ -1020,12 +1136,18 @@ if run_button:
     run_id += "_" + str(random.randint(10000, 99999))
     work_dir = tempfile.mkdtemp(prefix=f"qtl_analysis_{run_id}_")
     input_dir = os.path.join(work_dir, "inputs")
+    align_dir = os.path.join(work_dir, "aligned")
     os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(align_dir, exist_ok=True)
 
     ref = save_uploaded(ref_upload, input_dir)
-    parent_bam = save_uploaded(parent_upload, input_dir)
-    bulk1_bam = save_uploaded(bulk1_upload, input_dir)
-    bulk2_bam = save_uploaded(bulk2_upload, input_dir)
+
+    parent_fq1 = save_uploaded(parent_r1_upload, input_dir)
+    parent_fq2 = save_uploaded(parent_r2_upload, input_dir)
+    bulk1_fq1 = save_uploaded(bulk1_r1_upload, input_dir)
+    bulk1_fq2 = save_uploaded(bulk1_r2_upload, input_dir)
+    bulk2_fq1 = save_uploaded(bulk2_r1_upload, input_dir)
+    bulk2_fq2 = save_uploaded(bulk2_r2_upload, input_dir)
 
     progress_box = st.empty()
     log_box = st.empty()
@@ -1037,18 +1159,26 @@ if run_button:
         log_box.code("\n".join(logs[-20:]), language="text")
 
     try:
-        progress("Validating input files...")
+        progress("Building bwa index for reference FASTA...")
+        build_bwa_index(ref, progress=progress)
 
+        progress("Aligning FASTQ reads to the reference (parent, bulk 1, bulk 2)...")
+        parent_bam = align_fastq_to_bam(
+            ref, parent_fq1, parent_fq2, "parent", align_dir, progress=progress
+        )
+        bulk1_bam = align_fastq_to_bam(
+            ref, bulk1_fq1, bulk1_fq2, "bulk1", align_dir, progress=progress
+        )
+        bulk2_bam = align_fastq_to_bam(
+            ref, bulk2_fq1, bulk2_fq2, "bulk2", align_dir, progress=progress
+        )
+
+        progress("Validating aligned BAM files...")
         for bam in [parent_bam, bulk1_bam, bulk2_bam]:
             ok, message = validate_bam(bam)
             if not ok:
                 raise RuntimeError(f"{os.path.basename(bam)}: {message}")
             logs.append(f"✓ {os.path.basename(bam)}: {message}")
-
-            ok, message = ensure_bam_index(bam)
-            if not ok:
-                raise RuntimeError(f"{os.path.basename(bam)}: {message}")
-            logs.append(f"✓ {message}")
 
         progress("Checking reference sequence length...")
         ref_len = reference_length(ref)
