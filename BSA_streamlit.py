@@ -102,6 +102,16 @@ h1, h2, h3 { font-family: 'Space Grotesk', sans-serif !important; }
 .step-chip h4 { margin:2px 0 4px; font-family:'Space Grotesk',sans-serif; font-size:0.95rem; color:var(--ink); }
 .step-chip p { margin:0; font-size:0.8rem; color: var(--mist); line-height:1.35; }
 
+/* ---------- File uploader styling ---------- */
+[data-testid="stFileUploaderDropzone"] {
+    background: rgba(124,58,237,0.06) !important;
+    border: 1.5px dashed #A78BFA !important; border-radius: 12px !important;
+    transition: background .15s ease, border-color .15s ease;
+}
+[data-testid="stFileUploaderDropzone"]:hover {
+    background: rgba(124,58,237,0.14) !important; border-color: #F97316 !important;
+}
+
 /* ---------- Buttons ---------- */
 .stButton>button, .stDownloadButton>button {
     background: linear-gradient(100deg, var(--violet), var(--crimson));
@@ -116,16 +126,6 @@ h1, h2, h3 { font-family: 'Space Grotesk', sans-serif !important; }
     filter: brightness(1.06);
 }
 .stButton>button:active, .stDownloadButton>button:active { transform: translateY(0) scale(0.99); }
-
-/* ---------- File uploader (now on main page) ---------- */
-[data-testid="stFileUploaderDropzone"] {
-    background: rgba(124,58,237,0.06) !important;
-    border: 1.5px dashed #A78BFA !important; border-radius: 12px !important;
-    transition: background .15s ease, border-color .15s ease;
-}
-[data-testid="stFileUploaderDropzone"]:hover {
-    background: rgba(124,58,237,0.14) !important; border-color: #F97316 !important;
-}
 
 /* ---------- Metrics ---------- */
 [data-testid="stMetric"] {
@@ -249,6 +249,120 @@ def save_uploaded(uploaded_file, directory):
     return path
 
 
+def validate_fastq_gz(fastq_gz):
+    """Validate that a file appears to be a valid FASTQ.gz file."""
+    if fastq_gz is None:
+        return False, "No file provided"
+    
+    # Check file extension
+    if not fastq_gz.name.endswith(('.fastq.gz', '.fq.gz')):
+        return False, f"File {fastq_gz.name} does not have .fastq.gz or .fq.gz extension"
+    
+    # Check if it's valid gzip by trying to read first few lines
+    try:
+        import gzip
+        with gzip.open(fastq_gz, 'rb') as f:
+            # Try to read first 4 lines (one read)
+            lines = []
+            for _ in range(4):
+                line = f.readline()
+                if line:
+                    lines.append(line.decode('utf-8', errors='ignore'))
+                else:
+                    break
+            
+            if len(lines) < 4:
+                return False, "File appears to be truncated or not a valid FASTQ file"
+            
+            # Check FASTQ format: first line should start with @
+            if not lines[0].startswith('@'):
+                return False, "File does not appear to be in FASTQ format (first line should start with @)"
+            
+            return True, "FASTQ.gz file appears valid"
+    except Exception as e:
+        return False, f"Error validating FASTQ.gz: {str(e)}"
+
+
+def align_fastq_to_bam(ref, fastq_gz_path, output_bam_path, sample_name, progress=None):
+    """
+    Align FASTQ reads to reference genome and produce sorted BAM file.
+    Uses BWA mem for alignment.
+    """
+    # Check for required tools
+    bwa = command_for("bwa")
+    samtools = command_for("samtools")
+    
+    if not bwa:
+        raise RuntimeError("bwa is required for alignment but was not found. Please install bwa.")
+    if not samtools:
+        raise RuntimeError("samtools is required for alignment but was not found.")
+    
+    # Index reference if needed
+    if progress:
+        progress(f"Indexing reference genome for sample {sample_name}...")
+    
+    # Check if reference is indexed by bwa
+    if not os.path.exists(ref + ".bwt"):
+        bwa_index_cmd = bwa + ["index", ref]
+        result = run_cmd(bwa_index_cmd, timeout=3600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to index reference genome: {result.stderr}")
+    
+    if progress:
+        progress(f"Aligning {sample_name} FASTQ to reference genome...")
+    
+    # Align with BWA mem
+    sam_file = output_bam_path.replace('.bam', '.sam')
+    bwa_cmd = bwa + ["mem", "-t", "4", ref, fastq_gz_path]
+    
+    with open(sam_file, 'w') as sam_out:
+        result = subprocess.run(
+            bwa_cmd,
+            stdout=sam_out,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=7200  # 2 hours for large files
+        )
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"BWA alignment failed for {sample_name}: {result.stderr}")
+    
+    if progress:
+        progress(f"Converting SAM to BAM and sorting for {sample_name}...")
+    
+    # Convert SAM to BAM, sort, and index
+    # Sort and convert in one go
+    sort_cmd = samtools + ["sort", "-@", "4", "-o", output_bam_path, sam_file]
+    result = run_cmd(sort_cmd, timeout=3600)
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to sort BAM for {sample_name}: {result.stderr}")
+    
+    # Clean up SAM file
+    if os.path.exists(sam_file):
+        os.remove(sam_file)
+    
+    # Index the BAM
+    index_cmd = samtools + ["index", output_bam_path]
+    result = run_cmd(index_cmd, timeout=600)
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to index BAM for {sample_name}: {result.stderr}")
+    
+    return output_bam_path
+
+
+def validate_bam(bam):
+    samtools = command_for("samtools")
+    if not samtools:
+        return False, "samtools is not installed."
+
+    r = run_cmd(samtools + ["quickcheck", bam], timeout=300)
+    if r.returncode != 0:
+        return False, r.stderr.strip() or "BAM failed samtools quickcheck."
+    return True, "BAM passed samtools quickcheck."
+
+
 def ensure_bam_index(bam):
     samtools = command_for("samtools")
     if not samtools:
@@ -262,17 +376,6 @@ def ensure_bam_index(bam):
     if r.returncode != 0:
         return False, r.stderr.strip() or "samtools index failed."
     return True, f"Created index: {os.path.basename(bai)}"
-
-
-def validate_bam(bam):
-    samtools = command_for("samtools")
-    if not samtools:
-        return False, "samtools is not installed."
-
-    r = run_cmd(samtools + ["quickcheck", bam], timeout=300)
-    if r.returncode != 0:
-        return False, r.stderr.strip() or "BAM failed samtools quickcheck."
-    return True, "BAM passed samtools quickcheck."
 
 
 def reference_length(ref):
@@ -790,544 +893,3 @@ def make_summary(snp_df, window_df, ref_len, n1, n2,
         f"  Window size: {window_size} bp",
         f"  Step size: {step_size} bp",
         f"  Minimum depth filter: {min_depth}",
-        f"  Reference allele frequency filter: {ref_freq}",
-        "",
-        "Chromosome Statistics:",
-    ]
-
-    smooth_col = (
-        "tricubeDeltaSNP"
-        if "tricubeDeltaSNP" in window_df.columns
-        else "deltaSNP"
-    )
-
-    for chrom in chroms:
-        cw = window_df[window_df["CHROM"] == chrom]
-        if len(cw) and smooth_col in cw.columns:
-            vals = pd.to_numeric(cw[smooth_col], errors="coerce").dropna()
-            if len(vals):
-                lines.extend([
-                    f"  Chromosome {chrom}:",
-                    f"    Δ(SNP-index) range: [{vals.min():.3f}, {vals.max():.3f}]",
-                    f"    Maximum absolute value: {max(abs(vals.min()), abs(vals.max())):.3f}",
-                    f"    Number of windows: {len(cw)}",
-                ])
-
-    lines.extend([
-        "",
-        "Interpretation Guide:",
-        "• Positive Δ(SNP-index) values indicate QTL regions favoring bulk 1 phenotype",
-        "• Negative Δ(SNP-index) values indicate QTL regions favoring bulk 2 phenotype",
-        "• Look for regions where smoothed values exceed confidence intervals",
-        "• Higher absolute values indicate stronger QTL effects",
-        "• Focus on regions with |Δ(SNP-index)| > 0.3 for potential QTL",
-    ])
-
-    return "\n".join(lines)
-
-
-def create_outputs(snp_df, window_df, fig, outdir, ref_len,
-                   n1, n2, window_size, step_size, min_depth, ref_freq):
-    os.makedirs(outdir, exist_ok=True)
-
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    plot_file = os.path.join(
-        outdir, f"qtlseq_manhattan_plot_{timestamp}.html"
-    )
-    snp_file = os.path.join(
-        outdir, f"qtlseq_snp_data_{timestamp}.csv"
-    )
-    window_file = os.path.join(
-        outdir, f"qtlseq_window_data_{timestamp}.csv"
-    )
-    summary_file = os.path.join(
-        outdir, f"qtlseq_analysis_summary_{timestamp}.txt"
-    )
-    combined_file = os.path.join(
-        outdir, f"qtlseq_combined_results_{timestamp}.csv"
-    )
-    zip_file = os.path.join(
-        outdir, f"qtlseq_results_{timestamp}.zip"
-    )
-
-    fig.write_html(plot_file)
-    snp_df.to_csv(snp_file, index=False)
-    window_df.to_csv(window_file, index=False)
-
-    summary = make_summary(
-        snp_df, window_df, ref_len, n1, n2,
-        window_size, step_size, min_depth, ref_freq
-    )
-    with open(summary_file, "w", encoding="utf-8") as f:
-        f.write(summary)
-
-    combined = window_df.copy()
-    combined["Analysis_Type"] = "Sliding_Window"
-
-    if "deltaSNP" in snp_df.columns:
-        top_snps = snp_df.copy()
-        top_snps["abs_delta"] = abs(
-            pd.to_numeric(top_snps["deltaSNP"], errors="coerce")
-        )
-        top_snps = top_snps.nlargest(
-            min(1000, len(top_snps)), "abs_delta"
-        )
-        top_snps["Analysis_Type"] = "Individual_SNP"
-        top_snps.drop("abs_delta", axis=1, inplace=True)
-
-        common = ["CHROM", "POS", "POS_Mb", "Analysis_Type"]
-        snp_cols = [c for c in top_snps.columns if c not in common]
-        win_cols = [c for c in combined.columns if c not in common]
-
-        for col in win_cols:
-            if col not in top_snps.columns:
-                top_snps[col] = np.nan
-        for col in snp_cols:
-            if col not in combined.columns:
-                combined[col] = np.nan
-
-        combined = pd.concat(
-            [combined, top_snps],
-            ignore_index=True,
-            sort=False,
-        )
-
-    combined.to_csv(combined_file, index=False)
-
-    output_files = [
-        plot_file, snp_file, window_file, summary_file, combined_file
-    ]
-    with zipfile.ZipFile(
-        zip_file, "w", zipfile.ZIP_DEFLATED
-    ) as zf:
-        for file in output_files:
-            if os.path.exists(file):
-                zf.write(file, os.path.basename(file))
-
-    return {
-        "plot": plot_file,
-        "snp": snp_file,
-        "window": window_file,
-        "summary": summary_file,
-        "combined": combined_file,
-        "zip": zip_file,
-        "summary_text": summary,
-    }
-
-
-# =============================================================================
-# MAIN-PAGE INPUTS (moved from sidebar, full width)
-# =============================================================================
-st.markdown('<div class="section">Input Files</div>', unsafe_allow_html=True)
-
-up_col1, up_col2, up_col3, up_col4 = st.columns(4)
-with up_col1:
-    ref_upload = st.file_uploader(
-        "Reference FASTA",
-        type=["fasta", "fa", "fna"],
-        help="Reference genome used for mpileup/QTL-seq."
-    )
-with up_col2:
-    parent_upload = st.file_uploader(
-        "Parent sorted BAM",
-        type=["bam"],
-    )
-with up_col3:
-    bulk1_upload = st.file_uploader(
-        "Bulk 1 sorted BAM",
-        type=["bam"],
-    )
-with up_col4:
-    bulk2_upload = st.file_uploader(
-        "Bulk 2 sorted BAM",
-        type=["bam"],
-    )
-
-st.markdown('<div class="section">Analysis Parameters</div>', unsafe_allow_html=True)
-
-p_col1, p_col2, p_col3, p_col4 = st.columns(4)
-with p_col1:
-    n1 = st.number_input(
-        "Bulk 1 sample size (N1)", min_value=1, value=20, step=1
-    )
-with p_col2:
-    n2 = st.number_input(
-        "Bulk 2 sample size (N2)", min_value=1, value=20, step=1
-    )
-with p_col3:
-    min_total_depth = st.number_input(
-        "Minimum total bulk depth",
-        min_value=1, value=50, step=5,
-        help="Original notebook default: 50."
-    )
-with p_col4:
-    ref_allele_freq = st.slider(
-        "Minimum parent reference allele frequency",
-        min_value=0.0, max_value=1.0, value=0.10, step=0.01
-    )
-
-st.markdown('<div class="section">Sliding Window &amp; Strategy</div>', unsafe_allow_html=True)
-
-w_col1, w_col2, w_col3, w_col4 = st.columns(4)
-with w_col1:
-    window_kb = st.number_input(
-        "Window size (kb)",
-        min_value=1, value=500, step=10
-    )
-with w_col2:
-    step_kb = st.number_input(
-        "Step size (kb)",
-        min_value=1, value=50, step=5
-    )
-with w_col3:
-    use_reference_adaptive = st.checkbox(
-        "Use reference-length adaptive window",
-        value=False,
-        help="The original notebook adapted the window to reference length. "
-             "When enabled, window=max(20, reference_length/50) and "
-             "step=max(2, window/10)."
-    )
-with w_col4:
-    strategy = st.radio(
-        "Analysis strategy",
-        [
-            "QTL-seq first → manual BSA fallback",
-            "Manual BSA only",
-            "QTL-seq only",
-        ],
-    )
-
-run_button = st.button(
-    "Run QTL-seq / BSA Analysis",
-    type="primary",
-    use_container_width=True,
-)
-
-
-# =============================================================================
-# MAIN APP
-# =============================================================================
-if run_button:
-    if not all([ref_upload, parent_upload, bulk1_upload, bulk2_upload]):
-        st.error(
-            "Please upload all four required files: reference FASTA, "
-            "parent sorted BAM, bulk 1 sorted BAM, and bulk 2 sorted BAM."
-        )
-        st.stop()
-
-    run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_id += "_" + str(random.randint(10000, 99999))
-    work_dir = tempfile.mkdtemp(prefix=f"qtl_analysis_{run_id}_")
-    input_dir = os.path.join(work_dir, "inputs")
-    os.makedirs(input_dir, exist_ok=True)
-
-    ref = save_uploaded(ref_upload, input_dir)
-    parent_bam = save_uploaded(parent_upload, input_dir)
-    bulk1_bam = save_uploaded(bulk1_upload, input_dir)
-    bulk2_bam = save_uploaded(bulk2_upload, input_dir)
-
-    progress_box = st.empty()
-    log_box = st.empty()
-    logs = []
-
-    def progress(message):
-        logs.append(message)
-        progress_box.info(message)
-        log_box.code("\n".join(logs[-20:]), language="text")
-
-    try:
-        progress("Validating input files...")
-
-        for bam in [parent_bam, bulk1_bam, bulk2_bam]:
-            ok, message = validate_bam(bam)
-            if not ok:
-                raise RuntimeError(f"{os.path.basename(bam)}: {message}")
-            logs.append(f"✓ {os.path.basename(bam)}: {message}")
-
-            ok, message = ensure_bam_index(bam)
-            if not ok:
-                raise RuntimeError(f"{os.path.basename(bam)}: {message}")
-            logs.append(f"✓ {message}")
-
-        progress("Checking reference sequence length...")
-        ref_len = reference_length(ref)
-        if ref_len:
-            logs.append(f"Reference length: {ref_len:,} bases")
-        else:
-            logs.append("Reference length could not be determined.")
-
-        if use_reference_adaptive and ref_len:
-            window_size = max(20, ref_len // 50)
-            step_size = max(2, window_size // 10)
-        else:
-            window_size = int(window_kb * 1000)
-            step_size = int(step_kb * 1000)
-
-        if step_size >= window_size:
-            raise ValueError("Step size must be smaller than window size.")
-
-        logs.append(
-            f"Window size: {window_size:,} bp; "
-            f"step size: {step_size:,} bp"
-        )
-
-        outdir = os.path.join(work_dir, "results")
-        os.makedirs(outdir, exist_ok=True)
-
-        snp_df = None
-        window_df = None
-        used_strategy = None
-
-        # ---------------------------------------------------------------------
-        # Strategy 1: qtlseq
-        # ---------------------------------------------------------------------
-        if strategy in [
-            "QTL-seq first → manual BSA fallback",
-            "QTL-seq only",
-        ]:
-            qtlseq_cmd_base = command_for("qtlseq")
-            if not qtlseq_cmd_base:
-                if strategy == "QTL-seq only":
-                    raise RuntimeError(
-                        "qtlseq executable was not found. "
-                        "Install qtlseq in the deployment environment."
-                    )
-                logs.append(
-                    "qtlseq not found; proceeding directly to manual BSA."
-                )
-            else:
-                progress("Strategy 1: running QTL-seq...")
-                qtlseq_variations = [
-                    qtlseq_cmd_base + [
-                        "-r", ref,
-                        "-p", parent_bam,
-                        "-b1", bulk1_bam,
-                        "-b2", bulk2_bam,
-                        "-n1", str(n1),
-                        "-n2", str(n2),
-                        "-o", outdir,
-                        "-t", "2",
-                        "--force",
-                    ],
-                    qtlseq_cmd_base + [
-                        "-r", ref,
-                        "-p", parent_bam,
-                        "-b1", bulk1_bam,
-                        "-b2", bulk2_bam,
-                        "-n1", str(n1),
-                        "-n2", str(n2),
-                        "-o", outdir,
-                        "-t", "2",
-                        "--overwrite",
-                    ],
-                    qtlseq_cmd_base + [
-                        "-r", ref,
-                        "-p", parent_bam,
-                        "-b1", bulk1_bam,
-                        "-b2", bulk2_bam,
-                        "-n1", str(n1),
-                        "-n2", str(n2),
-                        "-t", "2",
-                    ],
-                ]
-
-                qtl_success = False
-                for i, cmd in enumerate(qtlseq_variations, 1):
-                    progress(f"Trying QTL-seq command variation {i}/3...")
-                    try:
-                        result = run_cmd(
-                            cmd, timeout=1800, cwd=outdir
-                        )
-                        if result.returncode == 0:
-                            qtl_success = True
-                            used_strategy = "QTL-seq"
-                            logs.append("✓ QTL-seq completed successfully.")
-                            if result.stdout:
-                                logs.append(result.stdout[-2000:])
-                            break
-                        else:
-                            logs.append(
-                                f"QTL-seq variation {i} failed: "
-                                f"{result.stderr[-1000:]}"
-                            )
-                    except subprocess.TimeoutExpired:
-                        logs.append(
-                            f"QTL-seq variation {i} timed out after 30 minutes."
-                        )
-
-                if qtl_success:
-                    snp_df, window_df, discovered = locate_result_files(outdir)
-                    logs.append(
-                        f"Found {len(discovered)} candidate result files."
-                    )
-
-                    if snp_df is None or window_df is None:
-                        logs.append(
-                            "QTL-seq ran but required SNP/window tables "
-                            "were not found; manual fallback will be used."
-                        )
-                        snp_df = window_df = None
-                elif strategy == "QTL-seq only":
-                    raise RuntimeError(
-                        "All QTL-seq command variations failed."
-                    )
-
-        # ---------------------------------------------------------------------
-        # Strategy 2: manual BSA
-        # ---------------------------------------------------------------------
-        if snp_df is None or window_df is None:
-            if strategy == "QTL-seq only":
-                raise RuntimeError("QTL-seq did not produce usable result tables.")
-
-            manual_dir = os.path.join(work_dir, "manual_bsa")
-            os.makedirs(manual_dir, exist_ok=True)
-
-            progress("Strategy 2: running manual BSA analysis...")
-            snp_df, window_df = manual_bsa(
-                ref=ref,
-                parent_bam=parent_bam,
-                bulk1_bam=bulk1_bam,
-                bulk2_bam=bulk2_bam,
-                manual_dir=manual_dir,
-                min_total_depth=int(min_total_depth),
-                ref_allele_freq=float(ref_allele_freq),
-                window_size=window_size,
-                step_size=step_size,
-                progress=progress,
-            )
-            used_strategy = "Manual BSA"
-
-        progress("Standardizing result tables...")
-        snp_df, window_df = standardize_results(snp_df, window_df)
-
-        progress("Creating interactive chromosome visualization...")
-        fig = create_plot(snp_df, window_df)
-
-        files_out = create_outputs(
-            snp_df=snp_df,
-            window_df=window_df,
-            fig=fig,
-            outdir=outdir,
-            ref_len=ref_len,
-            n1=int(n1),
-            n2=int(n2),
-            window_size=window_size,
-            step_size=step_size,
-            min_depth=int(min_total_depth),
-            ref_freq=float(ref_allele_freq),
-        )
-
-        st.session_state["result"] = {
-            "snp_df": snp_df,
-            "window_df": window_df,
-            "fig": fig,
-            "files": files_out,
-            "strategy": used_strategy,
-            "ref_len": ref_len,
-            "window_size": window_size,
-            "step_size": step_size,
-            "logs": logs,
-        }
-
-        progress("✓ Analysis completed successfully.")
-        st.success(f"Analysis completed using: {used_strategy}")
-
-    except Exception as exc:
-        st.error(f"Analysis failed: {exc}")
-        with st.expander("Detailed log", expanded=True):
-            st.code("\n".join(logs), language="text")
-
-
-# =============================================================================
-# RESULTS
-# =============================================================================
-if "result" in st.session_state:
-    result = st.session_state["result"]
-    snp_df = result["snp_df"]
-    window_df = result["window_df"]
-    fig = result["fig"]
-    files_out = result["files"]
-
-    st.markdown(
-        '<div class="section">Results overview</div>',
-        unsafe_allow_html=True
-    )
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("High-quality SNPs", f"{len(snp_df):,}")
-    c2.metric("Sliding windows", f"{len(window_df):,}")
-    c3.metric("Chromosomes", f"{window_df['CHROM'].nunique():,}")
-    c4.metric("Analysis strategy", result["strategy"])
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    tabs = st.tabs([
-        "SNP Results",
-        "Window Results",
-        "Summary",
-        "Downloads",
-    ])
-
-    with tabs[0]:
-        st.dataframe(snp_df, use_container_width=True, height=500)
-
-    with tabs[1]:
-        st.dataframe(window_df, use_container_width=True, height=500)
-
-    with tabs[2]:
-        st.code(files_out["summary_text"], language="text")
-
-    with tabs[3]:
-        download_specs = [
-            (
-                "Download all results (ZIP)",
-                files_out["zip"],
-                "application/zip",
-                os.path.basename(files_out["zip"]),
-            ),
-            (
-                "Download SNP data (CSV)",
-                files_out["snp"],
-                "text/csv",
-                os.path.basename(files_out["snp"]),
-            ),
-            (
-                "Download sliding-window data (CSV)",
-                files_out["window"],
-                "text/csv",
-                os.path.basename(files_out["window"]),
-            ),
-            (
-                "Download combined results (CSV)",
-                files_out["combined"],
-                "text/csv",
-                os.path.basename(files_out["combined"]),
-            ),
-            (
-                "Download summary (TXT)",
-                files_out["summary"],
-                "text/plain",
-                os.path.basename(files_out["summary"]),
-            ),
-            (
-                "Download interactive plot (HTML)",
-                files_out["plot"],
-                "text/html",
-                os.path.basename(files_out["plot"]),
-            ),
-        ]
-
-        for label, path, mime, filename in download_specs:
-            if os.path.exists(path):
-                with open(path, "rb") as f:
-                    st.download_button(
-                        label,
-                        data=f.read(),
-                        file_name=filename,
-                        mime=mime,
-                        use_container_width=True,
-                    )
-
-    with st.expander("Pipeline log"):
-        st.code("\n".join(result["logs"]), language="text")
