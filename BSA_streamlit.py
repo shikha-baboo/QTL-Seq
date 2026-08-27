@@ -740,7 +740,7 @@ def standardize_results(snp_df, window_df):
         if df["POS"].isna().all():
             df["POS"] = range(1, len(df) + 1)
 
-        df["POS"] = df["POS"].fillna(method="ffill").fillna(1)
+        df["POS"] = df["POS"].ffill().fillna(1)
         df["POS_Mb"] = df["POS"] / 1e6
 
     return snp_df, window_df
