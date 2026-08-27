@@ -1,0 +1,4 @@
+samtools
+bcftools
+bwa
+bzip2
